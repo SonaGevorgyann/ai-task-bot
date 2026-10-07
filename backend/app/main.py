@@ -8,11 +8,10 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import Task
 
-Base.metadata.create_all(bind=engine)  # creates the table if it doesn't exist
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Task Bot API")
 
-# Lets the React dashboard (a different address) call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,6 +26,7 @@ class TaskCreate(BaseModel):
     text: str
     source: str = "text"
     telegram_chat_id: Optional[int] = None
+    transcription_status: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -38,6 +38,7 @@ class TaskOut(BaseModel):
     text: Optional[str]
     status: str
     source: str
+    transcription_status: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -46,7 +47,12 @@ class TaskOut(BaseModel):
 
 @app.post("/tasks", response_model=TaskOut)
 def create_task(data: TaskCreate, db: Session = Depends(get_db)):
-    task = Task(text=data.text, source=data.source, telegram_chat_id=data.telegram_chat_id)
+    task = Task(
+        text=data.text,
+        source=data.source,
+        telegram_chat_id=data.telegram_chat_id,
+        transcription_status=data.transcription_status,
+    )
     db.add(task)
     db.commit()
     db.refresh(task)

@@ -8,7 +8,8 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     text = Column(Text, nullable=True)
-    status = Column(String, default="pending")   # pending / in_progress / completed
-    source = Column(String, default="text")      # text / voice
+    status = Column(String, default="pending")
+    source = Column(String, default="text")
     telegram_chat_id = Column(BigInteger, nullable=True)
+    transcription_status = Column(String, nullable=True)  # processing / done / failed
     created_at = Column(DateTime, default=datetime.utcnow)
