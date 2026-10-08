@@ -47,7 +47,7 @@ API docs are at http://localhost:8000/docs.
 
 - Search, and filter by text or voice.
 - Switch between Board and List.
-- Move a card with Pending, In Progress, or Completed.
+- Drag a card by its dotted handle into another column, or use Pending, In Progress, and Completed.
 - Delete asks for **Delete task** or **Keep**.
 
 A voice card says “Transcribing voice” until the worker finishes. If transcription fails, the card says it could not transcribe that note.

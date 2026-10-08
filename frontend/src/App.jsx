@@ -1,4 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCorners,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 const SAFETY_POLL_MS = 20000
@@ -14,6 +26,24 @@ const FILTERS = [
   { key: 'text', label: 'Text' },
   { key: 'voice', label: 'Voice' },
 ]
+
+const COLUMN_LABEL = Object.fromEntries(COLUMNS.map((column) => [column.key, column.title]))
+
+const dragAnnouncements = {
+  onDragStart({ active }) {
+    return `Picked up task ${active.id}.`
+  },
+  onDragOver({ over }) {
+    return over && COLUMN_LABEL[over.id] ? `Over ${COLUMN_LABEL[over.id]}.` : 'Not over a column.'
+  },
+  onDragEnd({ active, over }) {
+    if (!over || !COLUMN_LABEL[over.id]) return `Task ${active.id} stayed where it was.`
+    return `Task ${active.id} moved to ${COLUMN_LABEL[over.id]}.`
+  },
+  onDragCancel({ active }) {
+    return `Cancelled moving task ${active.id}.`
+  },
+}
 
 function readView() {
   try {
@@ -86,10 +116,8 @@ function IconText() {
 function IconMic() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="icon">
-      <path
-        fill="currentColor"
-        d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm-5-3a1 1 0 1 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.9V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.1A7 7 0 0 1 7 11Z"
-      />
+      <rect x="9" y="3" width="6" height="10" rx="3" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M7 11.5a5 5 0 0 0 10 0M12 16.5V20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }
@@ -113,8 +141,12 @@ function TaskBody({ task }) {
   return <p className="text">{task.text}</p>
 }
 
-function TaskCard({ task, fresh, saving, onStatus, onDelete }) {
+function TaskCard({ task, fresh, saving, onStatus, onDelete, draggable }) {
   const [confirming, setConfirming] = useState(false)
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
+    id: task.id,
+    disabled: !draggable || saving,
+  })
   const who = person(task)
   const classes = [
     'card',
@@ -122,12 +154,28 @@ function TaskCard({ task, fresh, saving, onStatus, onDelete }) {
     task.transcription_status === 'failed' ? 'bad' : '',
     task.transcription_status === 'processing' ? 'working' : '',
     fresh ? 'fresh' : '',
+    isDragging ? 'is-dragging' : '',
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
-    <article className={classes} aria-busy={task.transcription_status === 'processing'}>
+    <article ref={setNodeRef} className={classes} aria-busy={task.transcription_status === 'processing'}>
+      {draggable && (
+        <button
+          type="button"
+          className="grip"
+          aria-label={`Drag task ${task.id}`}
+          disabled={saving}
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
+        >
+          <i />
+          <i />
+          <i />
+        </button>
+      )}
       <TaskBody task={task} />
       <div className="meta">
         <span className="chip">#{task.id}</span>
@@ -173,6 +221,43 @@ function TaskCard({ task, fresh, saving, onStatus, onDelete }) {
   )
 }
 
+function BoardColumn({ column, items, fresh, saving, onStatus, onDelete }) {
+  const { setNodeRef, isOver } = useDroppable({ id: column.key })
+  return (
+    <section ref={setNodeRef} className={`column ${isOver ? 'is-over' : ''}`} aria-label={column.title}>
+      <div className="column-head">
+        <div>
+          <h2>
+            <span className={`swatch swatch-${column.key}`} />
+            {column.title}
+          </h2>
+          <p className="hint">{isOver ? 'Drop here' : column.hint}</p>
+        </div>
+        <span className="count" key={items.length}>{items.length}</span>
+      </div>
+      <div className="column-body">
+        {items.length === 0 && <p className="empty">{column.empty}</p>}
+        {items.map((task) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            fresh={fresh.has(task.id)}
+            saving={saving.has(task.id)}
+            onStatus={onStatus}
+            onDelete={onDelete}
+            draggable
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function collisionPreference(args) {
+  const hits = pointerWithin(args)
+  return hits.length ? hits : closestCorners(args)
+}
+
 export default function App() {
   const [boardToken] = useState(readBoardToken)
   const [boardState, setBoardState] = useState(boardToken ? 'ready' : 'link')
@@ -185,6 +270,11 @@ export default function App() {
   const [filter, setFilter] = useState('all')
   const [view, setView] = useState(readView)
   const [saving, setSaving] = useState(() => new Set())
+  const [activeId, setActiveId] = useState(null)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  )
 
   const tasksRef = useRef([])
   const seen = useRef(null)
@@ -438,7 +528,7 @@ export default function App() {
   const filtering = query.trim() !== '' || filter !== 'all'
 
   return (
-    <div className="app">
+    <div className={activeId != null ? 'app dragging' : 'app'}>
       <header className="hero">
         <div className="winbar" aria-hidden="true">
           <span className="win-dots">
@@ -488,32 +578,28 @@ export default function App() {
             />
           </svg>
           <svg className="doodle note" viewBox="0 0 64 64">
-            <path
-              d="M24 12v28.2a8.5 8.5 0 1 1-4.6-7.5V22l26-6.4v20.6a8.5 8.5 0 1 1-4.6-7.5V18.2L24 12z"
-              fill="#c6f56a"
-              stroke="#111"
-              strokeWidth="3"
-              strokeLinejoin="round"
-            />
+            <ellipse cx="22" cy="46" rx="13" ry="9" fill="#c6f56a" stroke="#111" strokeWidth="3" transform="rotate(-18 22 46)" />
+            <path d="M33 44V14" fill="none" stroke="#111" strokeWidth="4" strokeLinecap="round" />
+            <path d="M33 16c7 4 14 5 20 2" fill="none" stroke="#111" strokeWidth="4" strokeLinecap="round" />
           </svg>
         </div>
 
         {boardState === 'ready' && (
         <div className="stats">
           <div className="stat">
-            <b>{counts.all}</b>
+            <b key={counts.all}>{counts.all}</b>
             <span>Tasks</span>
           </div>
           <div className="stat">
-            <b>{counts.pending}</b>
+            <b key={counts.pending}>{counts.pending}</b>
             <span>Pending</span>
           </div>
           <div className="stat">
-            <b>{counts.in_progress}</b>
+            <b key={counts.in_progress}>{counts.in_progress}</b>
             <span>In progress</span>
           </div>
           <div className="stat">
-            <b>{counts.completed}</b>
+            <b key={counts.completed}>{counts.completed}</b>
             <span>Completed</span>
           </div>
         </div>
@@ -585,38 +671,41 @@ export default function App() {
       )}
 
       {boardState === 'ready' && !loading && view === 'board' && (
-        <div className="board">
-          {COLUMNS.map((column) => {
-            const items = visible.filter((task) => task.status === column.key)
-            return (
-              <section key={column.key} className="column" aria-label={column.title}>
-                <div className="column-head">
-                  <div>
-                    <h2>
-                      <span className={`swatch swatch-${column.key}`} />
-                      {column.title}
-                    </h2>
-                    <p className="hint">{column.hint}</p>
-                  </div>
-                  <span className="count">{items.length}</span>
-                </div>
-                <div className="column-body">
-                  {items.length === 0 && <p className="empty">{column.empty}</p>}
-                  {items.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      fresh={fresh.has(task.id)}
-                      saving={saving.has(task.id)}
-                      onStatus={changeStatus}
-                      onDelete={deleteTask}
-                    />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collisionPreference}
+          accessibility={{ announcements: dragAnnouncements }}
+          onDragStart={({ active }) => setActiveId(active.id)}
+          onDragCancel={() => setActiveId(null)}
+          onDragEnd={({ active, over }) => {
+            setActiveId(null)
+            if (!over) return
+            const next = String(over.id)
+            if (!COLUMNS.some((column) => column.key === next)) return
+            changeStatus(active.id, next)
+          }}
+        >
+          <div className="board">
+            {COLUMNS.map((column) => (
+              <BoardColumn
+                key={column.key}
+                column={column}
+                items={visible.filter((task) => task.status === column.key)}
+                fresh={fresh}
+                saving={saving}
+                onStatus={changeStatus}
+                onDelete={deleteTask}
+              />
+            ))}
+          </div>
+          <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
+            {activeId != null && tasks.some((task) => task.id === activeId) ? (
+              <article className={`card overlay status-${tasks.find((task) => task.id === activeId).status}`}>
+                <TaskBody task={tasks.find((task) => task.id === activeId)} />
+              </article>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       )}
 
       {boardState === 'ready' && !loading && view === 'list' && (

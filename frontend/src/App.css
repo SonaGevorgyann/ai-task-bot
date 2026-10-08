@@ -1,4 +1,20 @@
 * { box-sizing: border-box; }
+:root {
+  --cursor-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='30' viewBox='0 0 14 21' shape-rendering='crispEdges'%3E%3Cpath d='M1 1v15l4-3.5 3 6.5 3-1.5-3-6.5h5z' fill='white' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") 1 1, default;
+
+  --cursor-hand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='30' viewBox='0 0 14 21' shape-rendering='crispEdges'%3E%3Cpath d='M1 1v15l4-3.5 3 6.5 3-1.5-3-6.5h5z' fill='%23ffe56a' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") 1 1, pointer;
+}
+
+html, body { cursor: var(--cursor-arrow); }
+
+button,
+select,
+.grip,
+.card,
+.toggles button,
+.card-actions button { cursor: var(--cursor-hand); }
+
+.search input { cursor: text; }
 
 :focus-visible {
   outline: 3px solid #111;
@@ -8,6 +24,15 @@
 ::selection { background: #ffe56a; }
 
 button, input { font-family: inherit; }
+
+button,
+.card,
+.column,
+.stat,
+.search input,
+.live {
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background-color 0.2s ease, opacity 0.16s ease;
+}
 
 .sr-only {
   position: absolute;
@@ -221,6 +246,7 @@ body::before {
 .stat b {
   display: block;
   font-size: 1.15rem;
+  animation: pop 0.28s ease;
 }
 
 .stat span {
@@ -275,6 +301,11 @@ body::before {
 
 .search input::placeholder { color: #6d6d6d; font-weight: 700; }
 
+.search input:focus {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 #111, inset 0 2px 0 #fff;
+}
+
 .pills, .view { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .pills button, .view button {
@@ -285,7 +316,6 @@ body::before {
   font-weight: 800;
   border-radius: 999px;
   padding: 8px 14px;
-  cursor: pointer;
   box-shadow: 3px 3px 0 #111;
 }
 
@@ -293,6 +323,21 @@ body::before {
 .view button[aria-pressed="true"] {
   background: linear-gradient(180deg, #f7ffc8 0%, #c6f56a 46%, #8ed63c 100%);
   box-shadow: 2px 2px 0 #111, inset 0 2px 0 rgba(255, 255, 255, 0.85);
+}
+
+.pills button:hover,
+.view button:hover,
+.toggles button:hover,
+.card-actions button:hover {
+  transform: translate(-1px, -1px);
+}
+
+.pills button:active,
+.view button:active,
+.toggles button:active,
+.card-actions button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 #111;
 }
 
 .showing {
@@ -321,6 +366,15 @@ body::before {
   min-height: 240px;
   box-shadow: 6px 6px 0 #111;
   overflow: hidden;
+}
+
+.column.is-over {
+  box-shadow: 9px 9px 0 #111;
+  background: #fff;
+}
+
+.column.is-over .column-body {
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .column-head {
@@ -375,12 +429,14 @@ body::before {
   background: #fff;
   font-weight: 800;
   border: 2px solid #111;
+  animation: pop 0.28s ease;
 }
 
 .column-body {
   max-height: calc(100vh - 380px);
   overflow: auto;
   padding: 0 10px;
+  transition: background-color 0.16s ease;
 }
 
 .column-body::-webkit-scrollbar { width: 10px; }
@@ -418,9 +474,53 @@ body::before {
   animation: rise 0.45s ease;
 }
 
+.card.is-dragging {
+  opacity: 0.35;
+}
+
+.card.overlay {
+  width: 100%;
+  margin: 0;
+  rotate: -2deg;
+  box-shadow: 8px 8px 0 #111;
+  transition: none;
+}
+
+.grip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  width: 72px;
+  min-height: 36px;
+  margin: 0 auto 8px;
+  padding: 10px 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  touch-action: none;
+}
+
+.grip i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #111;
+  transition: transform 0.14s ease;
+}
+
+.grip:hover i:nth-child(1) { transform: translateY(-2px); }
+.grip:hover i:nth-child(3) { transform: translateY(2px); }
+.grip:disabled { cursor: progress; opacity: 0.5; }
+
 @keyframes rise {
   from { transform: translateY(6px); }
   to { transform: none; }
+}
+
+@keyframes pop {
+  from { transform: scale(0.72); }
+  to { transform: scale(1); }
 }
 
 .text {
@@ -491,7 +591,6 @@ body::before {
   font-weight: 800;
   padding: 7px 4px;
   border-radius: 999px;
-  cursor: pointer;
   white-space: nowrap;
 }
 
@@ -517,7 +616,6 @@ body::before {
   font-weight: 800;
   padding: 6px 10px;
   border-radius: 999px;
-  cursor: pointer;
 }
 
 .card-actions button.danger { background: #ffb3c7; }
@@ -559,8 +657,23 @@ body::before {
   .time { margin-left: 0; }
 }
 
+@media (hover: hover) {
+  .card:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 #111;
+  }
+
+  .card.is-dragging:hover,
+  .card.overlay:hover {
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation: none !important;
+    transition: none !important;
   }
+
+  .card.overlay { rotate: none; }
 }
