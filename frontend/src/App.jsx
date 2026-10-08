@@ -23,6 +23,31 @@ function readView() {
   }
 }
 
+function readBoardToken() {
+  const params = new URLSearchParams(window.location.search)
+  const fromUrl = (params.get('board') || '').trim()
+  if (fromUrl) {
+    try {
+      localStorage.setItem('board-token', fromUrl)
+    } catch {
+      // Private mode can block storage. The link still works for this visit.
+    }
+    params.delete('board')
+    const query = params.toString()
+    window.history.replaceState(
+      {},
+      '',
+      `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`,
+    )
+    return fromUrl
+  }
+  try {
+    return localStorage.getItem('board-token') || ''
+  } catch {
+    return ''
+  }
+}
+
 function formatTime(iso) {
   if (!iso) return ''
   // API datetimes are UTC and have no timezone suffix.
@@ -45,19 +70,7 @@ function person(task) {
   return null
 }
 
-function Flower({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="30" fill="#ffe4ef" />
-      <circle cx="32" cy="26" r="8" fill="#ff8fb3" />
-      <circle cx="20" cy="36" r="8" fill="#ffb3cc" />
-      <circle cx="44" cy="36" r="8" fill="#ffc2d6" />
-      <circle cx="26" cy="46" r="8" fill="#ff9fbe" />
-      <circle cx="40" cy="46" r="8" fill="#f7a8c4" />
-      <circle cx="32" cy="36" r="5.5" fill="#fff4b8" />
-    </svg>
-  )
-}
+
 
 function IconText() {
   return (
@@ -100,7 +113,8 @@ function TaskBody({ task }) {
   return <p className="text">{task.text}</p>
 }
 
-function TaskCard({ task, fresh, saving, onStatus }) {
+function TaskCard({ task, fresh, saving, onStatus, onDelete }) {
+  const [confirming, setConfirming] = useState(false)
   const who = person(task)
   const classes = [
     'card',
@@ -139,11 +153,29 @@ function TaskCard({ task, fresh, saving, onStatus }) {
           </button>
         ))}
       </div>
+      <div className="card-actions">
+        {confirming ? (
+          <>
+            <button type="button" className="danger" disabled={saving} onClick={() => onDelete(task.id)}>
+              Delete task
+            </button>
+            <button type="button" disabled={saving} onClick={() => setConfirming(false)}>
+              Keep
+            </button>
+          </>
+        ) : (
+          <button type="button" className="danger" disabled={saving} onClick={() => setConfirming(true)}>
+            Delete
+          </button>
+        )}
+      </div>
     </article>
   )
 }
 
 export default function App() {
+  const [boardToken] = useState(readBoardToken)
+  const [boardState, setBoardState] = useState(boardToken ? 'ready' : 'link')
   const [tasks, setTasks] = useState([])
   const [error, setError] = useState(null)
   const [fresh, setFresh] = useState(() => new Set())
@@ -167,9 +199,16 @@ export default function App() {
   }, [view])
 
   useEffect(() => {
+    if (!boardToken) {
+      setLoading(false)
+      return undefined
+    }
+
     let stopped = false
+    let rejected = false
     let source = null
     let retry = null
+    let poll = null
     let flashTimer = null
 
     function flash(ids) {
@@ -186,8 +225,28 @@ export default function App() {
     }
 
     async function load() {
+      if (rejected) return false
       try {
-        const res = await fetch(`${API_URL}/tasks`, { cache: 'no-store' })
+        const res = await fetch(`${API_URL}/tasks?board=${encodeURIComponent(boardToken)}`, { cache: 'no-store' })
+        if (res.status === 404) {
+          rejected = true
+          clearInterval(poll)
+          source?.close()
+          if (!stopped) {
+            setBoardState('invalid')
+            setTasks([])
+            tasksRef.current = []
+            setConnected(false)
+            setError(null)
+            setLoading(false)
+          }
+          try {
+            localStorage.removeItem('board-token')
+          } catch {
+            // The visit still ends on the private-link screen.
+          }
+          return false
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         if (stopped) return
@@ -200,7 +259,11 @@ export default function App() {
         const serverIds = new Set(data.map((task) => task.id))
         const arrivedDuringLoad = tasksRef.current.filter((task) => !serverIds.has(task.id))
         const pendingSaves = savingRef.current
-        const merged = [...arrivedDuringLoad, ...data].map((task) => {
+        const serverTasks = data.filter((task) => {
+          if (!pendingSaves.has(task.id)) return true
+          return tasksRef.current.some((item) => item.id === task.id)
+        })
+        const merged = [...arrivedDuringLoad, ...serverTasks].map((task) => {
           if (!pendingSaves.has(task.id)) return task
           return tasksRef.current.find((item) => item.id === task.id) || task
         })
@@ -209,11 +272,20 @@ export default function App() {
         tasksRef.current = merged
         setTasks(merged)
         setError(null)
+        return true
       } catch {
         if (!stopped) setError('Cannot reach the API. Retrying…')
+        return false
       } finally {
         if (!stopped) setLoading(false)
       }
+    }
+
+    function removeTask(id) {
+      const next = tasksRef.current.filter((task) => task.id !== id)
+      tasksRef.current = next
+      if (seen.current) seen.current.delete(id)
+      setTasks(next)
     }
 
     function applyEvent(task, highlight) {
@@ -231,7 +303,8 @@ export default function App() {
     }
 
     function connect() {
-      source = new EventSource(`${API_URL}/events`)
+      if (rejected) return
+      source = new EventSource(`${API_URL}/events?board=${encodeURIComponent(boardToken)}`)
       source.onopen = () => {
         if (!stopped) setConnected(true)
       }
@@ -244,6 +317,11 @@ export default function App() {
         }
         const task = payload?.task
         if (!task || stopped) return
+        if (payload.type === 'task_deleted') {
+          removeTask(task.id)
+          setError(null)
+          return
+        }
         const previous = tasksRef.current.find((item) => item.id === task.id)
         const arrived = !previous
         const transcribed = previous && previous.transcription_status !== 'done' && task.transcription_status === 'done'
@@ -253,13 +331,16 @@ export default function App() {
       source.onerror = () => {
         setConnected(false)
         source.close()
-        if (!stopped) retry = setTimeout(connect, 2000)
+        if (!stopped && !rejected) retry = setTimeout(connect, 2000)
       }
     }
 
-    load()
-    connect()
-    const poll = setInterval(load, SAFETY_POLL_MS)
+    load().then((ok) => {
+      if (stopped || rejected) return
+      connect()
+      poll = setInterval(load, SAFETY_POLL_MS)
+      if (!ok && !stopped) setError('Cannot reach the API. Retrying…')
+    })
     const onFocus = () => load()
     window.addEventListener('focus', onFocus)
 
@@ -271,7 +352,7 @@ export default function App() {
       source?.close()
       window.removeEventListener('focus', onFocus)
     }
-  }, [])
+  }, [boardToken])
 
   async function changeStatus(id, status) {
     const current = tasksRef.current.find((task) => task.id === id)
@@ -285,7 +366,7 @@ export default function App() {
     setTasks(optimistic)
 
     try {
-      const res = await fetch(`${API_URL}/tasks/${id}`, {
+      const res = await fetch(`${API_URL}/tasks/${id}?board=${encodeURIComponent(boardToken)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -301,6 +382,33 @@ export default function App() {
       tasksRef.current = rolled
       setTasks(rolled)
       setError('Could not update the task. Please try again.')
+    } finally {
+      savingRef.current.delete(id)
+      setSaving(new Set(savingRef.current))
+    }
+  }
+
+  async function deleteTask(id) {
+    const current = tasksRef.current.find((task) => task.id === id)
+    if (!current || savingRef.current.has(id)) return
+
+    savingRef.current.add(id)
+    setSaving(new Set(savingRef.current))
+    const remaining = tasksRef.current.filter((task) => task.id !== id)
+    tasksRef.current = remaining
+    setTasks(remaining)
+
+    try {
+      const res = await fetch(`${API_URL}/tasks/${id}?board=${encodeURIComponent(boardToken)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setError(null)
+    } catch {
+      const restored = [current, ...tasksRef.current.filter((task) => task.id !== id)]
+      tasksRef.current = restored
+      setTasks(restored)
+      setError('Could not delete the task. Please try again.')
     } finally {
       savingRef.current.delete(id)
       setSaving(new Set(savingRef.current))
@@ -332,20 +440,65 @@ export default function App() {
   return (
     <div className="app">
       <header className="hero">
+        <div className="winbar" aria-hidden="true">
+          <span className="win-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
         <div className="hero-top">
           <div className="brand">
-            <Flower className="mark" />
-            <div>
-              <h1>Task Dashboard</h1>
-              <p>A soft board for tasks you send by text or voice.</p>
+            <p className="eyebrow">text + voice</p>
+            <h1>To Do List</h1>
+          </div>
+          {boardState === 'ready' && (
+            <div className={`live ${connected ? '' : 'off'}`}>
+              <span className="dot" />
+              {connected ? 'Live' : 'Reconnecting'}
             </div>
-          </div>
-          <div className={`live ${connected ? '' : 'off'}`}>
-            <span className="dot" />
-            {connected ? 'Live' : 'Reconnecting'}
-          </div>
+          )}
+        </div>
+        <div className="doodles" aria-hidden="true">
+          <svg className="doodle" viewBox="0 0 64 64">
+            <path
+              d="M32 4l6.2 16.8H56L42.2 32.2 48 50 32 39.2 16 50l5.8-17.8L8 20.8h17.8z"
+              fill="#ffe56a"
+              stroke="#111"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <svg className="doodle heart" viewBox="0 0 64 58">
+            <path
+              d="M32 52C14 40 4 28 10 17 16 7 27 8 32 18 37 8 48 7 54 17 60 28 50 40 32 52z"
+              fill="#ff7eb6"
+              stroke="#111"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <svg className="doodle" viewBox="0 0 64 64">
+            <path
+              d="M32 2c2.2 14 8 21.2 30 30-22 2.4-27.8 10-30 30-2.2-20-10.2-27.6-30-30C22 23.2 29.8 16 32 2z"
+              fill="#8fd8ff"
+              stroke="#111"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <svg className="doodle note" viewBox="0 0 64 64">
+            <path
+              d="M24 12v28.2a8.5 8.5 0 1 1-4.6-7.5V22l26-6.4v20.6a8.5 8.5 0 1 1-4.6-7.5V18.2L24 12z"
+              fill="#c6f56a"
+              stroke="#111"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
 
+        {boardState === 'ready' && (
         <div className="stats">
           <div className="stat">
             <b>{counts.all}</b>
@@ -364,14 +517,29 @@ export default function App() {
             <span>Completed</span>
           </div>
         </div>
+        )}
+        <div className="checker" aria-hidden="true" />
       </header>
 
-      {error && (
+      {boardState === 'link' && (
+        <p className="welcome-note">
+          This page shows only your tasks. Send /board to the bot, then open the link it sends you.
+        </p>
+      )}
+
+      {boardState === 'invalid' && (
+        <p className="welcome-note">
+          That board link does not match anyone. Send /board to the bot and open the new link.
+        </p>
+      )}
+
+      {boardState === 'ready' && error && (
         <div className="error" role="alert">
           {error}
         </div>
       )}
 
+      {boardState === 'ready' && (
       <div className="toolbar">
         <label className="search">
           <span className="sr-only">Search tasks</span>
@@ -408,14 +576,15 @@ export default function App() {
           </p>
         )}
       </div>
+      )}
 
-      {loading && <p className="loading">Gathering your tasks…</p>}
+      {boardState === 'ready' && loading && <p className="loading">Gathering your tasks…</p>}
 
-      {!loading && tasks.length === 0 && !error && (
+      {boardState === 'ready' && !loading && tasks.length === 0 && !error && (
         <p className="welcome-note">Send a text or voice message to the bot. It will show up here.</p>
       )}
 
-      {!loading && view === 'board' && (
+      {boardState === 'ready' && !loading && view === 'board' && (
         <div className="board">
           {COLUMNS.map((column) => {
             const items = visible.filter((task) => task.status === column.key)
@@ -440,6 +609,7 @@ export default function App() {
                       fresh={fresh.has(task.id)}
                       saving={saving.has(task.id)}
                       onStatus={changeStatus}
+                      onDelete={deleteTask}
                     />
                   ))}
                 </div>
@@ -449,7 +619,7 @@ export default function App() {
         </div>
       )}
 
-      {!loading && view === 'list' && (
+      {boardState === 'ready' && !loading && view === 'list' && (
         <div className="list">
           {visible.length === 0 && <p className="empty-board">No tasks to show.</p>}
           {visible.map((task) => (
@@ -459,6 +629,7 @@ export default function App() {
               fresh={fresh.has(task.id)}
               saving={saving.has(task.id)}
               onStatus={changeStatus}
+              onDelete={deleteTask}
             />
           ))}
         </div>

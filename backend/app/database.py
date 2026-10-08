@@ -34,3 +34,9 @@ def ensure_schema():
         conn.execute(text(
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)"
         ))
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS board_token VARCHAR(64)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_board_token ON users (board_token)"
+        ))

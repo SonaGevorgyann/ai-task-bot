@@ -11,6 +11,7 @@ class User(Base):
     telegram_id = Column(BigInteger, unique=True, index=True, nullable=False)
     username = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
+    board_token = Column(String(64), unique=True, index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tasks = relationship("Task", back_populates="user")

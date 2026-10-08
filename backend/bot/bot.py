@@ -1,19 +1,21 @@
 import os
 import json
 import logging
+from html import escape
 from pathlib import Path
 
 import httpx
 import redis
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import LinkPreviewOptions, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:3000").rstrip("/")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 QUEUE = "transcription_jobs"
@@ -29,9 +31,11 @@ HELP = (
     "Hi! I turn messages into tasks.\n\n"
     "• Send a text message to create a task\n"
     "• Send a voice message and I will transcribe it\n"
-    "• /tasks shows your latest tasks\n\n"
-    "Move tasks between Pending, In Progress, and Completed on the dashboard. "
-    "I will message you when a status changes."
+    "• /tasks shows your latest tasks\n"
+    "• /board sends your private dashboard link\n\n"
+    "The dashboard shows only your tasks. "
+    "Move them between Pending, In Progress, and Completed, "
+    "and I will message you when a status changes."
 )
 
 STATUS_LABELS = {
@@ -61,18 +65,77 @@ async def api(method, path, **kwargs):
         return None
 
 
+def board_url(token):
+    # Telegram's HTML parser drops links to "localhost" and shows the label as plain text.
+    base = DASHBOARD_URL
+    if base.startswith("http://localhost"):
+        base = "http://127.0.0.1" + base[len("http://localhost"):]
+    elif base.startswith("https://localhost"):
+        base = "https://127.0.0.1" + base[len("https://localhost"):]
+    return f"{base}/?board={token}"
+
+
+def board_html(token):
+    url = escape(board_url(token), quote=True)
+    return f'Your private board: <a href="{url}">Open board</a>'
+
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+
+
+async def board_token_for(update: Update):
+    user = update.effective_user
+    if not user:
+        return None
+    data = await api(
+        "POST",
+        "/boards",
+        json={
+            "telegram_id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+        },
+    )
+    return data["board_token"]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message:
-        await update.message.reply_text(HELP)
+    if not update.message:
+        return
+    text = HELP
+    parse_mode = None
+    try:
+        token = await board_token_for(update)
+        if token:
+            text += "\n\n" + board_html(token)
+            parse_mode = "HTML"
+    except httpx.HTTPError:
+        log.error("Could not create a board link")
+    await update.message.reply_text(text, parse_mode=parse_mode, link_preview_options=NO_PREVIEW)
+
+
+async def board(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    try:
+        token = await board_token_for(update)
+    except httpx.HTTPError:
+        log.error("Could not create a board link")
+        await update.message.reply_text("⚠️ I couldn't make your board link. Please try again.")
+        return
+    if not token:
+        return
+    await update.message.reply_text(board_html(token), parse_mode="HTML", link_preview_options=NO_PREVIEW)
 
 
 async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
         return
     try:
-        tasks = await api("GET", "/tasks", params={"telegram_id": update.effective_user.id})
+        token = await board_token_for(update)
+        tasks = await api("GET", "/tasks", params={"board": token})
     except httpx.HTTPError:
-        log.exception("Could not load tasks")
+        log.error("Could not load tasks")
         await update.message.reply_text("⚠️ I couldn't load your tasks. Please try again.")
         return
 
@@ -160,6 +223,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("board", board))
     app.add_handler(CommandHandler("tasks", my_tasks))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))

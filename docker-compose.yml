@@ -50,6 +50,7 @@ services:
     env_file: .env
     environment:
       API_URL: http://api:8000
+      DASHBOARD_URL: http://127.0.0.1:3000
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       PYTHONUNBUFFERED: "1"
