@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 from app.database import SessionLocal
 from app.models import Task
+from app.events import NOTIFY_QUEUE, publish_event
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -21,6 +22,12 @@ QUEUE = "transcription_jobs"
 MAX_ATTEMPTS = 3
 
 STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
+
+STATUS_LABELS = {
+    "pending": "Pending",
+    "in_progress": "In Progress",
+    "completed": "Completed ✅",
+}
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -62,6 +69,8 @@ def update_task(task_id, **fields):
             for key, value in fields.items():
                 setattr(task, key, value)
             db.commit()
+            db.refresh(task)
+            publish_event("task_updated", task)
 
 
 def download_voice(file_id):
@@ -104,18 +113,37 @@ def handle_job(job):
     edit_message(job["chat_id"], job["message_id"], f"✅ Task #{job['task_id']}: {text}")
 
 
+def send_notification(chat_id, text):
+    tg("sendMessage", chat_id=chat_id, text=text)
+
+
+def handle_notification(job):
+    label = STATUS_LABELS.get(job["status"], job["status"])
+    with_retries(send_notification, job["chat_id"], f"📌 Task #{job['task_id']} → {label}")
+
+
 def main():
     log.info("Worker started, waiting for jobs...")
     while True:
         try:
-            item = r.brpop(QUEUE, timeout=5)
+            item = r.brpop([QUEUE, NOTIFY_QUEUE], timeout=5)
         except redis.RedisError:
             log.error("Redis unavailable, retrying in 3 seconds")
             time.sleep(3)
             continue
         if not item:
             continue
-        job = json.loads(item[1])
+
+        queue_name, raw = item
+        job = json.loads(raw)
+
+        if queue_name == NOTIFY_QUEUE:
+            try:
+                handle_notification(job)
+            except Exception as e:
+                log.error("Notification failed: %s", safe(e))
+            continue
+
         log.info("Processing task %s", job["task_id"])
         try:
             handle_job(job)
