@@ -29,7 +29,7 @@ Speech-to-text uses an OpenAI-compatible endpoint. The sample env points at Groq
 copy .env.example .env
 ```
 
-`TELEGRAM_BOT_TOKEN` comes from BotFather. `STT_API_KEY` is a Groq or OpenAI speech-to-text key. The database values in the example are fine for local Docker. `DASHBOARD_URL` is the address the bot puts in the **Open board** link. Leave it as `http://127.0.0.1:3000` for a local run. Telegram does not make a `localhost` address clickable.
+`TELEGRAM_BOT_TOKEN` comes from BotFather. `STT_API_KEY` is a Groq or OpenAI speech-to-text key. The database values in the example are fine for local Docker. `DASHBOARD_URL` is the public address of the deployed dashboard. The bot uses it for the **Open board** link. Telegram does not make a `localhost` address clickable, so a phone cannot open it. Use the deployed `https://` address. `http://127.0.0.1:3000` is only for trying the page on the same computer.
 
 2. Start the stack:
 
@@ -39,7 +39,7 @@ docker compose up --build
 
 3. Message the bot. `/start` explains the commands and sends your board link. `/board` sends the link again. `/tasks` lists your latest tasks.
 
-4. Tap **Open board** on the computer where Docker is running. The page is titled To Do List and lists only your tasks. Opening http://localhost:3000 without that link does not show anyone's tasks. A tap on a phone stays on the phone, because `127.0.0.1` is that phone.
+4. Tap **Open board**. It opens the deployed To Do List page and lists only your tasks. Opening the site without that link does not show anyone's tasks.
 
 API docs are at http://localhost:8000/docs.
 
