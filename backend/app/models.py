@@ -21,6 +21,8 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Shown as #1, #2, … for one person. Starts again at 1 when that person has no tasks left.
+    number = Column(Integer, nullable=True)
     text = Column(Text, nullable=True)
     status = Column(String, default="pending")
     source = Column(String, default="text")

@@ -154,7 +154,7 @@ async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = "Transcription failed"
         if len(text) > 80:
             text = text[:77] + "…"
-        lines.append(f"#{task['id']} [{label}] {text}")
+        lines.append(f"#{task.get('number') or task['id']} [{label}] {text}")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -167,7 +167,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = {"text": text, "source": "text", **actor(update)}
     try:
         task = await api("POST", "/tasks", json=payload)
-        await update.message.reply_text(f"✅ Task #{task['id']} created")
+        await update.message.reply_text(f"✅ Task #{task.get('number') or task['id']} created")
     except httpx.HTTPError:
         log.exception("Could not reach the API")
         await update.message.reply_text("⚠️ Sorry, I couldn't save your task. Please try again.")
@@ -205,6 +205,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task_id = task["id"]
         job = {
             "task_id": task_id,
+            "number": task.get("number") or task_id,
             "file_id": voice.file_id,
             "chat_id": update.message.chat_id,
             "message_id": status_msg.message_id,

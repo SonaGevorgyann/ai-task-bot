@@ -18,6 +18,7 @@ def task_to_dict(task):
     created_at = task.created_at.isoformat() if task.created_at else None
     return {
         "id": task.id,
+        "number": task.number,
         "text": task.text,
         "status": task.status,
         "source": task.source,
@@ -50,7 +51,12 @@ def enqueue_notification(task):
     """Best-effort: never break the API call."""
     if not task.telegram_chat_id:
         return
-    job = {"task_id": task.id, "chat_id": task.telegram_chat_id, "status": task.status}
+    job = {
+        "task_id": task.id,
+        "number": task.number or task.id,
+        "chat_id": task.telegram_chat_id,
+        "status": task.status,
+    }
     try:
         _redis.lpush(NOTIFY_QUEUE, json.dumps(job))
     except redis.RedisError:

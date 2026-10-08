@@ -178,7 +178,7 @@ function TaskCard({ task, fresh, saving, onStatus, onDelete, draggable }) {
       )}
       <TaskBody task={task} />
       <div className="meta">
-        <span className="chip">#{task.id}</span>
+        <span className="chip">#{task.number ?? task.id}</span>
         <span className="chip">
           {task.source === 'voice' ? <IconMic /> : <IconText />}
           {task.source === 'voice' ? 'Voice' : 'Text'}
@@ -511,7 +511,7 @@ export default function App() {
       if (filter !== 'all' && task.source !== filter) return false
       if (!needle) return true
       const who = person(task) || ''
-      return `${task.text || ''} ${who} ${task.id}`.toLowerCase().includes(needle)
+      return `${task.text || ''} ${who} ${task.number ?? task.id}`.toLowerCase().includes(needle)
     })
   }, [tasks, query, filter])
 

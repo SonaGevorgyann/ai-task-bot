@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
@@ -87,12 +87,33 @@ class TaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    number: Optional[int] = None
     text: Optional[str]
     status: str
     source: str
     transcription_status: Optional[str] = None
     created_at: datetime
     user: Optional[UserOut] = None
+
+
+def next_task_number(db: Session, user_id: Optional[int]) -> int:
+    """1 when this person has no tasks, otherwise one higher than their highest number."""
+    def owned():
+        return Task.user_id == user_id if user_id is not None else Task.user_id.is_(None)
+
+    remaining = db.query(func.count(Task.id)).filter(owned()).scalar() or 0
+    if remaining == 0:
+        return 1
+    highest = db.query(func.max(Task.number)).filter(owned()).scalar()
+    return (highest or 0) + 1
+
+
+def restart_task_ids_if_empty(db: Session):
+    """When every task is gone, the next database id is 1 again."""
+    if db.query(func.count(Task.id)).scalar():
+        return
+    db.execute(text("SELECT setval(pg_get_serial_sequence('tasks', 'id'), 1, false)"))
+    db.commit()
 
 
 def upsert_user(db: Session, telegram_id, username, first_name):
@@ -154,6 +175,7 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
         telegram_chat_id=data.telegram_chat_id,
         transcription_status=data.transcription_status,
         user=user,
+        number=next_task_number(db, user.id if user else None),
     )
     db.add(task)
     db.commit()
@@ -237,6 +259,7 @@ def delete_task(task_id: int, board: str, db: Session = Depends(get_db)):
     publish_event("task_deleted", task)
     db.delete(task)
     db.commit()
+    restart_task_ids_if_empty(db)
     return Response(status_code=204)
 
 

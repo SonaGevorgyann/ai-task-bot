@@ -136,7 +136,7 @@ def handle_job(job):
     if not text:
         raise EmptyTranscription()
     update_task(job["task_id"], text=text, transcription_status="done")
-    edit_message(job["chat_id"], job["message_id"], f"✅ Task #{job['task_id']}: {clip(text)}")
+    edit_message(job["chat_id"], job["message_id"], f"✅ Task #{job.get('number') or job['task_id']}: {clip(text)}")
     log.info("Transcribed task %s (%s chars)", job["task_id"], len(text))
 
 
@@ -146,7 +146,7 @@ def send_notification(chat_id, text):
 
 def handle_notification(job):
     label = STATUS_LABELS.get(job["status"], job["status"])
-    with_retries(send_notification, job["chat_id"], f"📌 Task #{job['task_id']} → {label}")
+    with_retries(send_notification, job["chat_id"], f"📌 Task #{job.get('number') or job['task_id']} → {label}")
 
 
 def main():
