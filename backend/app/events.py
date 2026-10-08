@@ -14,14 +14,28 @@ _redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 
 def task_to_dict(task):
+    user = task.user
+    created_at = task.created_at.isoformat() if task.created_at else None
     return {
         "id": task.id,
         "text": task.text,
         "status": task.status,
         "source": task.source,
         "transcription_status": task.transcription_status,
-        "created_at": task.created_at.isoformat(),
+        "created_at": created_at,
+        "user": None if user is None else {
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "first_name": user.first_name,
+        },
     }
+
+
+def redis_ok():
+    try:
+        return bool(_redis.ping())
+    except redis.RedisError:
+        return False
 
 
 def publish_event(event_type, task):

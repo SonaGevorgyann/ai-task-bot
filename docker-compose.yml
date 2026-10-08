@@ -9,6 +9,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7
@@ -17,6 +18,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   api:
     build: ./backend
@@ -26,6 +28,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"
     depends_on:
@@ -33,6 +36,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     restart: unless-stopped
 
   bot:
@@ -43,9 +52,10 @@ services:
       API_URL: http://api:8000
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -58,7 +68,10 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
     depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -66,11 +79,16 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
     ports:
       - "3000:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
